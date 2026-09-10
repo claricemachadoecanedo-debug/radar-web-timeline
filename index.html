@@ -1,1 +1,184 @@
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Movido</title></head><body style="font-family:sans-serif;padding:24px"><p>Este repositório público não hospeda mais o visualizador.</p><p>O arquivo ficou no repositório privado <code>timeline-erbs</code>.</p></body></html>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141824">
+<title>Timeline ERBs</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#141824;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;overflow:hidden}
+#map{position:fixed;inset:0;height:100dvh}
+#topbar,#bottombar,#sheet,#legend{background:rgba(16,20,32,.96);border:1px solid #2a3348;z-index:1000}
+#topbar{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:8px;right:8px;display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:12px}
+#topbar .meta{flex:1;min-width:0}h1{margin:0;font-size:14px}
+#topbar p{margin:2px 0 0;font-size:12px;color:#b7becc}
+#status-play{font-weight:700;color:#FF5A5A}
+#bottombar{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:center;padding:8px;border-radius:12px}
+button{appearance:none;border:0;border-radius:10px;color:#fff;font-weight:700;min-height:44px;padding:0 12px;background:#0096FF}
+#btn-fit,#btn-filtros,#btn-sheet-close{background:#2a3348}
+#btn-play{min-width:72px}
+#timeline-slider{flex:1;min-width:0;height:28px}
+#sheet{position:fixed;left:8px;right:8px;bottom:calc(68px + env(safe-area-inset-bottom,0px));max-height:62dvh;overflow:auto;padding:12px;border-radius:12px;display:none}
+body.sheet-open #sheet{display:block}
+#legend{position:fixed;right:8px;bottom:calc(68px + env(safe-area-inset-bottom,0px));padding:8px 10px;border-radius:10px;font-size:12px}
+.color-box{width:10px;height:10px;border-radius:50%;background:#FF3366;display:inline-block;margin-right:6px}
+.chk,.field{display:flex;gap:8px;align-items:center;min-height:40px}
+.field{flex-direction:column;align-items:stretch;color:#aaa;font-size:12px}
+input[type=datetime-local],input[type=range],#lock-pass{background:#1c2230;color:#fff;border:1px solid #2a3348;border-radius:8px;min-height:42px;font-size:16px;width:100%;padding:8px;color-scheme:dark}
+.leaflet-control-zoom{margin-bottom:78px!important}
+#lock{position:fixed;inset:0;z-index:4000;display:flex;align-items:center;justify-content:center;background:#0f1320;padding:20px}
+#lock .box{width:min(92vw,360px);background:#1a2130;border:1px solid #2a3348;border-radius:14px;padding:22px}
+#lock h2{margin:0 0 8px;font-size:18px}
+#lock p{margin:0 0 12px;color:#b7becc;font-size:13px}
+#lock button{width:100%}
+#lock .err{color:#ff6b6b;min-height:18px}
+body.locked #map,body.locked #topbar,body.locked #bottombar,body.locked #sheet,body.locked #legend{display:none!important}
+</style>
+</head>
+<body class="locked">
+<div id="lock"><form class="box" id="lock-form">
+<h2>Timeline ERBs</h2>
+<p>Digite a senha para abrir o mapa.</p>
+<p class="err" id="lock-err"></p>
+<input id="lock-pass" type="password" placeholder="Senha" enterkeyhint="go">
+<button type="submit">Entrar</button>
+</form></div>
+<div id="map"></div>
+<div id="topbar"><div class="meta"><h1>Timeline de ERBs</h1><p><span id="current-time">--</span> · <span id="status-play">PAUSADO</span></p></div><button type="button" id="btn-filtros">Filtros</button></div>
+<div id="sheet">
+<h3 style="margin:0 0 10px;display:flex;justify-content:space-between;align-items:center">Filtros <button type="button" id="btn-sheet-close">Fechar</button></h3>
+<label class="chk"><input type="checkbox" id="chk-legendas"> Mostrar legendas</label>
+<label class="chk"><input type="checkbox" id="chk-voo"> Modo voo</label>
+<label class="field">Data inicio<input type="datetime-local" id="data-inicio"></label>
+<label class="field">Data final<input type="datetime-local" id="data-final"></label>
+<label class="field">Velocidade <span id="vel-label">Lenta</span><input type="range" id="vel-slider" min="1" max="10" value="2"></label>
+</div>
+<div id="bottombar"><button type="button" id="btn-play">Play</button><input type="range" id="timeline-slider" min="0" value="0" step="1"><button type="button" id="btn-fit">Ver mapa</button></div>
+<div id="legend"><span class="color-box"></span>GARDENIA</div>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const EXPECT = 'seintgo2026';
+const KEY = 'erb_gate_ok_v1';
+const DATA_URLS = [
+  'dados.csv',
+  'https://cdn.jsdelivr.net/gh/claricemachadoecanedo-debug/radar-web-timeline@main/dados.csv',
+  'https://raw.githubusercontent.com/claricemachadoecanedo-debug/radar-web-timeline/main/dados.csv'
+];
+let dados = [];
+let map, featureGroup, periodos=[], currentIdx=0, playing=false, timer;
+const cor='#FF3366';
+function parseCsv(text){
+  const lines=text.trim().split(/\r?\n/);
+  const headers=lines[0].split(',');
+  return lines.slice(1).filter(Boolean).map(line=>{
+    const cols=line.split(','), o={};
+    headers.forEach((h,i)=>o[h]=cols[i]);
+    o.LATITUDE=+o.LATITUDE; o.LONGITUDE=+o.LONGITUDE; o.lat_dest=+o.lat_dest; o.lon_dest=+o.lon_dest;
+    return o;
+  });
+}
+async function loadDados(){
+  let last;
+  for (const url of DATA_URLS){
+    try{
+      const res=await fetch(url,{cache:'no-store'});
+      if(!res.ok) throw new Error(String(res.status));
+      const rows=parseCsv(await res.text());
+      if(rows.length){ dados=rows; return; }
+    }catch(e){ last=e; }
+  }
+  throw last||new Error('sem dados');
+}
+function unlock(){
+  document.body.classList.remove('locked');
+  document.getElementById('lock').style.display='none';
+  try{sessionStorage.setItem(KEY,'1')}catch(e){}
+  startMap();
+}
+document.getElementById('lock-form').addEventListener('submit', ev=>{
+  ev.preventDefault();
+  if(document.getElementById('lock-pass').value===EXPECT) unlock();
+  else { document.getElementById('lock-err').textContent='Senha incorreta.'; document.getElementById('lock-pass').value=''; }
+});
+if(sessionStorage.getItem(KEY)==='1') unlock();
+function norm(v,end){ if(!v) return ''; return v.length===16?v+(end?':59':':00'):v; }
+function filtrados(){
+  const ini=norm(document.getElementById('data-inicio').value,false);
+  const fim=norm(document.getElementById('data-final').value,true);
+  return dados.filter(d=>(!ini||d.DATA_HORA>=ini)&&(!fim||d.DATA_HORA<=fim));
+}
+function intervalo(){ const v=+document.getElementById('vel-slider').value||2; return 2100-v*180; }
+function enquadrar(lista){
+  const pts=lista&&lista.length?lista:filtrados();
+  if(!pts.length||!map) return;
+  map.fitBounds(L.latLngBounds(pts.map(d=>[d.LATITUDE,d.LONGITUDE])).pad(0.18),{padding:[72,18],maxZoom:16,animate:false});
+}
+function updateMap(){
+  featureGroup.clearLayers();
+  if(!periodos.length){ document.getElementById('current-time').textContent='sem dados'; return; }
+  const tempo=periodos[currentIdx];
+  const [datePart,timePart]=tempo.split(' ');
+  const [ano,mes,dia]=datePart.split('-');
+  document.getElementById('current-time').textContent=dia+'/'+mes+'/'+ano+' '+timePart;
+  const vis=filtrados().filter(d=>d.periodo<=tempo);
+  const novos=vis.filter(d=>d.periodo===tempo);
+  vis.forEach(d=>{
+    const isNew=d.periodo===tempo, op=isNew?1:0.45;
+    L.polyline([[d.LATITUDE,d.LONGITUDE],[d.lat_dest,d.lon_dest]],{color:cor,weight:isNew?3:1,opacity:op}).addTo(featureGroup);
+    L.circleMarker([d.LATITUDE,d.LONGITUDE],{radius:isNew?7:4,color:cor,fillColor:cor,fillOpacity:op,weight:1})
+      .bindTooltip('<b>Alvo:</b> '+d.ALVO+'<br><b>DataHora:</b> '+String(d.DATA_HORA||'').replace('T',' '),{permanent:document.getElementById('chk-legendas').checked,direction:'top'})
+      .addTo(featureGroup);
+  });
+  document.getElementById('timeline-slider').value=currentIdx;
+  if(document.getElementById('chk-voo').checked && novos.length){
+    if(novos.length===1) map.flyTo([novos[0].LATITUDE,novos[0].LONGITUDE],Math.max(map.getZoom(),15),{duration:0.4});
+    else map.flyToBounds(L.latLngBounds(novos.map(d=>[d.LATITUDE,d.LONGITUDE])).pad(0.4),{maxZoom:16,duration:0.4});
+  }
+}
+function aplicar(){
+  periodos=[...new Set(filtrados().map(d=>d.periodo))].sort();
+  const sl=document.getElementById('timeline-slider');
+  sl.max=Math.max(0,periodos.length-1);
+  if(currentIdx>=periodos.length) currentIdx=Math.max(0,periodos.length-1);
+  updateMap();
+}
+function togglePlay(){
+  if(!periodos.length) return;
+  playing=!playing;
+  document.getElementById('status-play').textContent=playing?'TOCANDO':'PAUSADO';
+  document.getElementById('status-play').style.color=playing?'#0096FF':'#FF5A5A';
+  document.getElementById('btn-play').textContent=playing?'Pause':'Play';
+  if(playing) timer=setInterval(()=>{ if(currentIdx<periodos.length-1){currentIdx++;updateMap();} else togglePlay(); }, intervalo());
+  else clearInterval(timer);
+}
+async function startMap(){
+  if(map){ setTimeout(()=>{map.invalidateSize();enquadrar();},100); return; }
+  try{ await loadDados(); }
+  catch(e){ document.getElementById('lock').style.display='flex'; document.body.classList.add('locked'); document.getElementById('lock-err').textContent='Nao carregou os pontos. Recarregue com internet.'; return; }
+  map=L.map('map',{zoomControl:false}).setView([-13.92,-40.47],5);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(map);
+  featureGroup=L.featureGroup().addTo(map);
+  document.getElementById('btn-play').onclick=togglePlay;
+  document.getElementById('btn-fit').onclick=()=>enquadrar();
+  document.getElementById('btn-filtros').onclick=()=>{document.body.classList.toggle('sheet-open');document.getElementById('btn-filtros').textContent=document.body.classList.contains('sheet-open')?'Fechar':'Filtros';};
+  document.getElementById('btn-sheet-close').onclick=()=>{document.body.classList.remove('sheet-open');document.getElementById('btn-filtros').textContent='Filtros';};
+  document.getElementById('timeline-slider').oninput=e=>{currentIdx=+e.target.value;updateMap();};
+  document.getElementById('chk-legendas').onchange=updateMap;
+  document.getElementById('chk-voo').onchange=updateMap;
+  document.getElementById('data-inicio').onchange=document.getElementById('data-inicio').oninput=aplicar;
+  document.getElementById('data-final').onchange=document.getElementById('data-final').oninput=aplicar;
+  document.getElementById('vel-slider').oninput=()=>{
+    const v=+document.getElementById('vel-slider').value;
+    document.getElementById('vel-label').textContent=v<=3?'Lenta':(v<=7?'Media':'Rapida');
+    if(playing){clearInterval(timer);timer=setInterval(()=>{ if(currentIdx<periodos.length-1){currentIdx++;updateMap();} else togglePlay(); }, intervalo());}
+  };
+  currentIdx=0; aplicar();
+  currentIdx=Math.max(0,periodos.length-1); updateMap(); enquadrar(filtrados());
+  setTimeout(()=>map.invalidateSize(),200);
+}
+</script>
+</body>
+</html>
