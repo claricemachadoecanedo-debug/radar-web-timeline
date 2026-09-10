@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141824">
+<title>Timeline ERBs — experimental</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#141824;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;overflow:hidden}
+#map{position:fixed;inset:0;height:100dvh}
+#topbar,#bottombar,#sheet,#legend,#banner{background:rgba(16,20,32,.96);border:1px solid #2a3348;z-index:1000}
+#topbar{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:8px;right:8px;display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:12px}
+#topbar .meta{flex:1;min-width:0}h1{margin:0;font-size:13px}
+#topbar p{margin:2px 0 0;font-size:11px;color:#b7becc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#status-play{font-weight:700;color:#FF5A5A}
+#bottombar{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:center;padding:8px;border-radius:12px}
+button{appearance:none;border:0;border-radius:10px;color:#fff;font-weight:700;min-height:44px;padding:0 10px;background:#0096FF;font-size:13px}
+#btn-fit,#btn-filtros,#btn-sheet-close,#btn-orig{background:#2a3348}
+#btn-play{min-width:68px}
+#timeline-slider{flex:1;min-width:0;height:28px}
+#sheet{position:fixed;left:8px;right:8px;bottom:calc(68px + env(safe-area-inset-bottom,0px));max-height:62dvh;overflow:auto;padding:12px;border-radius:12px;display:none}
+body.sheet-open #sheet{display:block}
+#legend{position:fixed;right:8px;bottom:calc(68px + env(safe-area-inset-bottom,0px));padding:8px 10px;border-radius:10px;font-size:11px;line-height:1.45}
+.sw{display:inline-block;width:14px;height:0;border-top:3px solid #FF3366;margin-right:6px;vertical-align:middle}
+.sw.dash{border-top-style:dashed;border-top-color:#fff}
+.sw.now{width:10px;height:10px;border:0;border-radius:50%;background:#fff;box-shadow:0 0 0 4px rgba(255,51,102,.45)}
+#banner{position:fixed;left:8px;right:8px;top:calc(64px + env(safe-area-inset-top,0px));padding:8px 10px;border-radius:10px;font-size:12px;display:none}
+#banner.on{display:block}
+.chk,.field{display:flex;gap:8px;align-items:center;min-height:40px}
+.field{flex-direction:column;align-items:stretch;color:#aaa;font-size:12px}
+input[type=datetime-local],input[type=range],#lock-pass{background:#1c2230;color:#fff;border:1px solid #2a3348;border-radius:8px;min-height:42px;font-size:16px;width:100%;padding:8px;color-scheme:dark}
+.leaflet-control-zoom{margin-bottom:78px!important}
+#lock{position:fixed;inset:0;z-index:4000;display:flex;align-items:center;justify-content:center;background:#0f1320;padding:20px}
+#lock .box{width:min(92vw,360px);background:#1a2130;border:1px solid #2a3348;border-radius:14px;padding:22px}
+#lock h2{margin:0 0 8px;font-size:18px}
+#lock p{margin:0 0 12px;color:#b7becc;font-size:13px}
+#lock button{width:100%}
+#lock .err{color:#ff6b6b;min-height:18px}
+body.locked #map,body.locked #topbar,body.locked #bottombar,body.locked #sheet,body.locked #legend,body.locked #banner{display:none!important}
+.here-wrap{position:relative;width:22px;height:22px}
+.here-core{position:absolute;inset:5px;border-radius:50%;background:#fff;border:2px solid #FF3366}
+.here-ring{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(255,255,255,.85);animation:pulse 1.4s ease-out infinite}
+@keyframes pulse{0%{transform:scale(.55);opacity:.9}100%{transform:scale(1.35);opacity:0}}
+.note{font-size:12px;color:#9aa3b5;margin:8px 0 0}
+</style>
+</head>
+<body class="locked">
+<div id="lock"><form class="box" id="lock-form">
+<h2>Experimental</h2>
+<p>Trajetoria A	o B, rastro e zoom cidade/Brasil. O visualizador original nao muda.</p>
+<p class="err" id="lock-err"></p>
+<input id="lock-pass" type="password" placeholder="Senha" enterkeyhint="go">
+<button type="submit">Entrar</button>
+</form></div>
+<div id="map"></div>
+<div id="topbar">
+  <div class="meta">
+    <h1>Deslocamento · experimental</h1>
+    <p><span id="current-time">--</span> · <span id="status-play">PAUSADO</span></p>
+  </div>
+  <button type="button" id="btn-orig">Original</button>
+  <button type="button" id="btn-filtros">Filtros</button>
+</div>
+<div id="banner"></div>
+<div id="sheet">
+<h3 style="margin:0 0 10px;display:flex;justify-content:space-between;align-items:center">Filtros <button type="button" id="btn-sheet-close">Fechar</button></h3>
+<label class="chk"><input type="checkbox" id="chk-rastro" checked> Rastro (10 pontos)</label>
+<label class="chk"><input type="checkbox" id="chk-traj" checked> Trajetoria A	o B</label>
+<label class="chk"><input type="checkbox" id="chk-zoom" checked> Auto-zoom cidade/Brasil</label>
+<label class="chk"><input type="checkbox" id="chk-voo"> Modo voo extra</label>
+<label class="field">Data inicio<input type="datetime-local" id="data-inicio"></label>
+<label class="field">Data final<input type="datetime-local" id="data-final"></label>
+<label class="field">Velocidade <span id="vel-label">Lenta</span><input type="range" id="vel-slider" min="1" max="10" value="2"></label>
+<p class="note">Linha continua = deslocamento curto no mesmo dia. Tracejado = vao de dias ou salto longo — nao e a rota real. Sem linha = permanencia na mesma torre.</p>
+</div>
+<div id="bottombar"><button type="button" id="btn-play">Play</button><input type="range" id="timeline-slider" min="0" value="0" step="1"><button type="button" id="btn-fit">Ver mapa</button></div>
+<div id="legend">
+  <div><span class="sw now"></span>agora</div>
+  <div><span class="sw"></span>deslocamento local</div>
+  <div><span class="sw dash"></span>salto / vao longo</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const EXPECT='seintgo2026';
+const KEY='erb_gate_ok_v1';
+const TRAIL=10;
+const STAY_KM=0.3;
+const CITY_KM=25;
+const LONG_KM=50;
+const DATA_URLS=['dados.csv','https://cdn.jsdelivr.net/gh/claricemachadoecanedo-debug/radar-web-timeline@main/dados.csv','https://raw.githubusercontent.com/claricemachadoecanedo-debug/radar-web-timeline/main/dados.csv'];
+let dados=[], eventos=[], currentIdx=0, playing=false, timer, map, layers, hereMarker, moving=false;
+function parseCsv(text){
+  const lines=text.trim().split(/\r?\n/);
+  const headers=lines[0].split(',');
+  return lines.slice(1).filter(Boolean).map(line=>{
+    const cols=line.split(','), o={};
+    headers.forEach((h,i)=>o[h]=cols[i]);
+    o.LATITUDE=+o.LATITUDE; o.LONGITUDE=+o.LONGITUDE;
+    o.lat_dest=+o.lat_dest; o.lon_dest=+o.lon_dest;
+    o.ts=Date.parse((o.DATA_HORA||'').replace(' ','T'));
+    return o;
+  }).filter(d=>isFinite(d.LATITUDE)&&isFinite(d.LONGITUDE)&&isFinite(d.ts));
+}
+async function loadDados(){
+  let last;
+  for(const url of DATA_URLS){
+    try{
+      const res=await fetch(url,{cache:'no-store'});
+      if(!res.ok) throw new Error(String(res.status));
+      const rows=parseCsv(await res.text());
+      if(rows.length){ dados=rows; return; }
+    }catch(e){ last=e; }
+  }
+  throw last||new Error('sem dados');
+}
+function unlock(){
+  document.body.classList.remove('locked');
+  document.getElementById('lock').style.display='none';
+  try{sessionStorage.setItem(KEY,'1')}catch(e){}
+  startMap();
+}
+document.getElementById('lock-form').addEventListener('submit', ev=>{
+  ev.preventDefault();
+  if(document.getElementById('lock-pass').value===EXPECT) unlock();
+  else { document.getElementById('lock-err').textContent='Senha incorreta.'; document.getElementById('lock-pass').value=''; }
+});
+if(sessionStorage.getItem(KEY)==='1') unlock();
+document.getElementById('btn-orig').onclick=()=>{ location.href='index.html'; };
+function hav(a,b){
+  const R=6371, p1=a.LATITUDE*Math.PI/180, p2=b.LATITUDE*Math.PI/180;
+  const dp=p2-p1, dl=(b.LONGITUDE-a.LONGITUDE)*Math.PI/180;
+  const h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+}
+function hoursBetween(a,b){ return Math.max(0,(b.ts-a.ts)/36e5); }
+function region(p){
+  const la=p.LATITUDE, lo=p.LONGITUDE;
+  if(la<-23.7 && lo>-46.6) return 'Baixada Santista';
+  if(la<-22.8 && lo>-47.6 && lo<-46.8) return 'Interior de SP';
+  if(la>-11.7 && la<-11.1 && lo>-42.1 && lo<-41.6) return 'Irece / BA interior';
+  if(la>-11.7 && la<-11.4 && lo>-41.4 && lo<-41.0) return 'Central BA';
+  if(la>-12.4 && la<-12.0 && lo>-39.2 && lo<-38.8) return 'Feira de Santana';
+  return la.toFixed(2)+','+lo.toFixed(2);
+}
+function fmtDur(h){
+  if(h<1) return Math.max(1,Math.round(h*60))+' min';
+  if(h<36) return Math.round(h)+' h';
+  return Math.round(h/24)+' dias';
+}
+function fmtWhen(p){
+  const d=new Date(p.ts);
+  const pad=n=>String(n).padStart(2,'0');
+  return pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear()+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function norm(v,end){ if(!v) return ''; return v.length===16?v+(end?':59':':00'):v; }
+function filtrados(){
+  const ini=norm(document.getElementById('data-inicio').value,false);
+  const fim=norm(document.getElementById('data-final').value,true);
+  return dados.filter(d=>{
+    const iso=String(d.DATA_HORA||'').replace(' ','T');
+    return (!ini||iso>=ini)&&(!fim||iso<=fim);
+  }).sort((a,b)=>a.ts-b.ts);
+}
+function intervalo(){ const v=+document.getElementById('vel-slider').value||2; return 2100-v*180; }
+function showBanner(text){
+  const el=document.getElementById('banner');
+  el.textContent=text;
+  el.classList.add('on');
+  clearTimeout(showBanner._t);
+  showBanner._t=setTimeout(()=>el.classList.remove('on'), 4200);
+}
+function hereIcon(){
+  return L.divIcon({className:'',html:'<div class="here-wrap"><div class="here-ring"></div><div class="here-core"></div></div>',iconSize:[22,22],iconAnchor:[11,11]});
+}
+function draw(){
+  if(!layers||!eventos.length) return;
+  layers.clearLayers();
+  const i=currentIdx;
+  const cur=eventos[i];
+  document.getElementById('current-time').textContent=fmtWhen(cur)+' · '+region(cur);
+  const showTraj=document.getElementById('chk-traj').checked;
+  const showTrail=document.getElementById('chk-rastro').checked;
+  const start=showTrail?Math.max(0,i-TRAIL):i;
+  if(showTraj){
+    for(let k=1;k<=i;k++){
+      const a=eventos[k-1], b=eventos[k];
+      const d=hav(a,b), h=hoursBetween(a,b);
+      if(d<STAY_KM) continue;
+      const long=d>=LONG_KM || h>=24;
+      const recent=k>=start;
+      L.polyline([[a.LATITUDE,a.LONGITUDE],[b.LATITUDE,b.LONGITUDE]],{
+        color: long?'#ffffff':'#FF3366',
+        weight: long?2.5:3,
+        opacity: recent?0.95:0.22,
+        dashArray: long?'7 7':null
+      }).addTo(layers);
+    }
+  }
+  if(showTrail){
+    for(let k=start;k<i;k++){
+      const p=eventos[k];
+      const age=i-k;
+      L.circleMarker([p.LATITUDE,p.LONGITUDE],{
+        radius: Math.max(3,7-age*0.3),
+        color:'#FF3366', fillColor:'#FF3366',
+        fillOpacity: Math.max(0.15,0.55-age*0.04),
+        weight:1, opacity:0.7
+      }).bindTooltip(region(p)+'<br>'+fmtWhen(p),{direction:'top'}).addTo(layers);
+    }
+  }
+  if(hereMarker) map.removeLayer(hereMarker);
+  hereMarker=L.marker([cur.LATITUDE,cur.LONGITUDE],{icon:hereIcon(),zIndexOffset:800}).addTo(map);
+  hereMarker.bindTooltip('<b>Agora</b><br>'+region(cur)+'<br>'+fmtWhen(cur),{direction:'top'});
+  document.getElementById('timeline-slider').value=i;
+}
+function jumpLabel(a,b){
+  const d=hav(a,b), h=hoursBetween(a,b);
+  if(d<LONG_KM && !(h>=24 && d>=20)) return;
+  showBanner(region(a)+' → '+region(b)+' · '+d.toFixed(0)+' km · '+fmtDur(h));
+}
+function autoZoom(prev,cur,forceAll){
+  if(!document.getElementById('chk-zoom').checked && !forceAll) return;
+  if(forceAll){
+    const pts=eventos.map(p=>[p.LATITUDE,p.LONGITUDE]);
+    map.fitBounds(L.latLngBounds(pts).pad(0.18),{padding:[80,18],maxZoom:7,animate:false});
+    return;
+  }
+  if(!cur) return;
+  const d=prev?hav(prev,cur):0;
+  if(prev && d>=LONG_KM){
+    map.fitBounds(L.latLngBounds([[prev.LATITUDE,prev.LONGITUDE],[cur.LATITUDE,cur.LONGITUDE]]).pad(0.35),{padding:[90,20],maxZoom:7,duration:0.6});
+    return;
+  }
+  const start=Math.max(0,currentIdx-TRAIL);
+  const nearby=eventos.slice(start,currentIdx+1).filter(p=>hav(p,cur)<CITY_KM);
+  if(nearby.length>=2){
+    map.fitBounds(L.latLngBounds(nearby.map(p=>[p.LATITUDE,p.LONGITUDE])).pad(0.35),{padding:[90,20],maxZoom:14,animate:true,duration:0.35});
+  } else {
+    const z=map.getZoom();
+    if(z<12 || z>15) map.flyTo([cur.LATITUDE,cur.LONGITUDE],14,{duration:0.35});
+    else map.panTo([cur.LATITUDE,cur.LONGITUDE],{duration:0.25});
+  }
+}
+function aplicar(){
+  eventos=filtrados();
+  const sl=document.getElementById('timeline-slider');
+  sl.max=Math.max(0,eventos.length-1);
+  if(currentIdx>=eventos.length) currentIdx=Math.max(0,eventos.length-1);
+  draw();
+}
+function stepTo(nextIdx){
+  if(!eventos.length) return;
+  const prev=eventos[currentIdx];
+  currentIdx=Math.max(0,Math.min(eventos.length-1,nextIdx));
+  const cur=eventos[currentIdx];
+  draw();
+  if(prev && cur && cur.ts>prev.ts) jumpLabel(prev,cur);
+  autoZoom(prev,cur,false);
+  if(document.getElementById('chk-voo').checked && hav(prev||cur,cur)>=STAY_KM){
+    map.flyTo([cur.LATITUDE,cur.LONGITUDE], Math.max(map.getZoom(),13),{duration:0.35});
+  }
+}
+function togglePlay(){
+  if(!eventos.length) return;
+  playing=!playing;
+  document.getElementById('status-play').textContent=playing?'TOCANDO':'PAUSADO';
+  document.getElementById('status-play').style.color=playing?'#0096FF':'#FF5A5A';
+  document.getElementById('btn-play').textContent=playing?'Pause':'Play';
+  if(playing){
+    timer=setInterval(()=>{
+      if(currentIdx>=eventos.length-1){ togglePlay(); return; }
+      stepTo(currentIdx+1);
+    }, intervalo());
+  } else clearInterval(timer);
+}
+async function startMap(){
+  if(map){ setTimeout(()=>{map.invalidateSize();autoZoom(null,eventos[currentIdx],true);},120); return; }
+  try{ await loadDados(); }
+  catch(e){
+    document.getElementById('lock').style.display='flex';
+    document.body.classList.add('locked');
+    document.getElementById('lock-err').textContent='Nao carregou os pontos. Recarregue com internet.';
+    return;
+  }
+  map=L.map('map',{zoomControl:false}).setView([-13.92,-40.47],5);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(map);
+  layers=L.layerGroup().addTo(map);
+  document.getElementById('btn-play').onclick=togglePlay;
+  document.getElementById('btn-fit').onclick=()=>autoZoom(null,eventos[currentIdx],true);
+  document.getElementById('btn-filtros').onclick=()=>{
+    document.body.classList.toggle('sheet-open');
+    document.getElementById('btn-filtros').textContent=document.body.classList.contains('sheet-open')?'Fechar':'Filtros';
+  };
+  document.getElementById('btn-sheet-close').onclick=()=>{
+    document.body.classList.remove('sheet-open');
+    document.getElementById('btn-filtros').textContent='Filtros';
+  };
+  document.getElementById('timeline-slider').oninput=e=>stepTo(+e.target.value);
+  ['chk-rastro','chk-traj','chk-zoom','chk-voo'].forEach(id=>document.getElementById(id).onchange=()=>{draw();});
+  document.getElementById('data-inicio').onchange=document.getElementById('data-inicio').oninput=aplicar;
+  document.getElementById('data-final').onchange=document.getElementById('data-final').oninput=aplicar;
+  document.getElementById('vel-slider').oninput=()=>{
+    const v=+document.getElementById('vel-slider').value;
+    document.getElementById('vel-label').textContent=v<=3?'Lenta':(v<=7?'Media':'Rapida');
+    if(playing){ clearInterval(timer); timer=setInterval(()=>{ if(currentIdx>=eventos.length-1){togglePlay();return;} stepTo(currentIdx+1); }, intervalo()); }
+  };
+  currentIdx=0; aplicar();
+  currentIdx=Math.max(0,eventos.length-1);
+  draw();
+  autoZoom(null,eventos[currentIdx],true);
+  setTimeout(()=>map.invalidateSize(),200);
+}
+</script>
+</body>
+</html>
